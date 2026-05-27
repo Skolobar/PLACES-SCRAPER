@@ -21,7 +21,8 @@ input,select{width:100%;background:var(--s1);border:1px solid var(--border);bord
 input:focus{border-color:var(--accent);background:#fff}
 .g2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
-@media(max-width:600px){.g2,.g3{grid-template-columns:1fr}}
+.g4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px}
+@media(max-width:700px){.g2,.g3,.g4{grid-template-columns:1fr}}
 button{font-family:var(--mono);font-size:11px;font-weight:500;border:none;border-radius:7px;cursor:pointer;padding:9px 16px;transition:all 0.15s}
 button:hover{filter:brightness(0.92)}
 button:active{transform:scale(0.97)}
@@ -43,7 +44,7 @@ button:disabled{opacity:0.3;cursor:not-allowed;filter:none}
 .cl{font-size:9px;color:var(--muted2);text-transform:uppercase;letter-spacing:.5px}
 .pw{height:3px;background:var(--s2);border-radius:2px;margin-bottom:1rem;overflow:hidden}
 .pb{height:100%;background:var(--accent);border-radius:2px;transition:width .4s;width:0%}
-.log{background:var(--s1);border:1px solid var(--border);border-radius:7px;padding:.75rem;height:120px;overflow-y:auto;font-size:10px;line-height:1.7;margin-bottom:1rem}
+.log{background:var(--s1);border:1px solid var(--border);border-radius:7px;padding:.75rem;height:140px;overflow-y:auto;font-size:10px;line-height:1.7;margin-bottom:1rem}
 .ll{display:flex;gap:7px}
 .lt{color:var(--muted2);flex-shrink:0}
 .lm.info{color:var(--muted)}
@@ -60,12 +61,17 @@ tr:hover td{background:var(--s1)}
 a.tl{color:var(--accent);text-decoration:none;font-size:10px}
 a.tl:hover{text-decoration:underline}
 .rat{color:#d97706}
+.info-box{background:rgba(26,107,60,0.06);border:1px solid rgba(26,107,60,0.2);border-radius:7px;padding:.7rem 1rem;font-size:10px;color:var(--accent);margin-bottom:1rem}
 </style>
 </head>
 <body>
 <div class="app">
 <h1>Places <span>Scraper</span></h1>
-<div class="sub">Google Places API · naziv · telefon · adresa</div>
+<div class="sub">Google Places API · naziv · telefon · adresa · Google Maps</div>
+
+<div class="info-box">
+  ℹ️ Google Places API vraća max 60 rezultata po pretrazi (3 stranice × 20). Za više rezultata koristi specifičnije upite npr. "apartmani Split centar", "apartmani Split Meje" itd.
+</div>
 
 <div class="card">
   <div class="card-title">Konfiguracija</div>
@@ -79,7 +85,7 @@ a.tl:hover{text-decoration:underline}
       <input type="text" id="query" placeholder="npr. villa Mostar, apartmani Dubrovnik" />
     </div>
   </div>
-  <div class="g3" style="margin-top:10px">
+  <div class="g4" style="margin-top:10px">
     <div>
       <label>Jezik rezultata</label>
       <select id="lang">
@@ -97,6 +103,10 @@ a.tl:hover{text-decoration:underline}
         <option value="hotel">Hotel</option>
         <option value="restaurant">Restoran</option>
       </select>
+    </div>
+    <div>
+      <label>Max rezultata</label>
+      <input type="number" id="maxResults" value="60" min="1" max="60" />
     </div>
     <div>
       <label>Samo sa telefonom</label>
@@ -148,29 +158,61 @@ a.tl:hover{text-decoration:underline}
 </div>
 
 <script>
-const GAPI = 'https://maps.googleapis.com/maps/api/place';
+// Cloudflare Worker proxy URL
+const PROXY = 'https://places-proxy.rcobuka.workers.dev';
+const GAPI  = 'https://maps.googleapis.com/maps/api/place';
+
 let stopFlag=false, rowCount=0;
-const DB_NAME='PlacesScraperV4', DB_VER=1;
+const DB_NAME='PlacesScraperV5', DB_VER=1;
 let db;
 
 async function openDB(){
   return new Promise((res,rej)=>{
     const r=indexedDB.open(DB_NAME,DB_VER);
-    r.onupgradeneeded=e=>{if(!e.target.result.objectStoreNames.contains('places'))e.target.result.createObjectStore('places',{keyPath:'id',autoIncrement:true})};
+    r.onupgradeneeded=e=>{
+      if(!e.target.result.objectStoreNames.contains('places'))
+        e.target.result.createObjectStore('places',{keyPath:'id',autoIncrement:true});
+    };
     r.onsuccess=e=>res(e.target.result);
     r.onerror=()=>rej(r.error);
   });
 }
-const dbAdd=rec=>new Promise((res,rej)=>{const tx=db.transaction('places','readwrite');const r=tx.objectStore('places').add(rec);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
-const dbAll=()=>new Promise((res,rej)=>{const tx=db.transaction('places','readonly');const r=tx.objectStore('places').getAll();r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
-const dbClear=()=>new Promise((res,rej)=>{const tx=db.transaction('places','readwrite');tx.objectStore('places').clear();tx.oncomplete=res;tx.onerror=rej});
+const dbAdd=rec=>new Promise((res,rej)=>{
+  const tx=db.transaction('places','readwrite');
+  const r=tx.objectStore('places').add(rec);
+  r.onsuccess=()=>res(r.result);
+  r.onerror=()=>rej(r.error);
+});
+const dbAll=()=>new Promise((res,rej)=>{
+  const tx=db.transaction('places','readonly');
+  const r=tx.objectStore('places').getAll();
+  r.onsuccess=()=>res(r.result);
+  r.onerror=()=>rej(r.error);
+});
+const dbClear=()=>new Promise((res,rej)=>{
+  const tx=db.transaction('places','readwrite');
+  tx.objectStore('places').clear();
+  tx.oncomplete=res; tx.onerror=rej;
+});
 
-function log(msg,t='info'){const b=document.getElementById('logBox');const d=document.createElement('div');d.className='ll';d.innerHTML=`<span class="lt">${new Date().toLocaleTimeString('bs')}</span><span class="lm ${t}">${msg}</span>`;b.appendChild(d);b.scrollTop=b.scrollHeight}
-function setStatus(txt,s=''){document.getElementById('sbText').textContent=txt;document.getElementById('sbDot').className='dot'+(s?' '+s:'')}
-function updCnt(f,p){document.getElementById('cntFound').textContent=f;document.getElementById('cntPhone').textContent=p}
-function setProgress(p){document.getElementById('progBar').style.width=p+'%'}
-function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}
-function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+function log(msg,t='info'){
+  const b=document.getElementById('logBox');
+  const d=document.createElement('div');
+  d.className='ll';
+  d.innerHTML=`<span class="lt">${new Date().toLocaleTimeString('bs')}</span><span class="lm ${t}">${msg}</span>`;
+  b.appendChild(d); b.scrollTop=b.scrollHeight;
+}
+function setStatus(txt,s=''){
+  document.getElementById('sbText').textContent=txt;
+  document.getElementById('sbDot').className='dot'+(s?' '+s:'');
+}
+function updCnt(f,p){
+  document.getElementById('cntFound').textContent=f;
+  document.getElementById('cntPhone').textContent=p;
+}
+function setProgress(p){ document.getElementById('progBar').style.width=p+'%'; }
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
 function addRow(rec){
   const tb=document.getElementById('tbody');
@@ -189,89 +231,134 @@ function addRow(rec){
   tb.prepend(tr);
 }
 
-async function gFetch(endpoint, params){
-  const url = `${GAPI}/${endpoint}?${new URLSearchParams(params)}`;
-  const r = await fetch(url);
-  if(!r.ok) throw new Error('HTTP '+r.status);
+// Pozovi Google API kroz Cloudflare Worker proxy
+async function gCall(endpoint, params){
+  const googleUrl = `${GAPI}/${endpoint}?${new URLSearchParams(params)}`;
+  const proxyUrl  = `${PROXY}?url=${encodeURIComponent(googleUrl)}`;
+  const r = await fetch(proxyUrl);
+  if(!r.ok) throw new Error('Proxy greška: HTTP '+r.status);
   return r.json();
 }
 
 async function startSearch(){
-  db=await openDB();
-  const apiKey=document.getElementById('apiKey').value.trim();
-  const query=document.getElementById('query').value.trim();
-  const lang=document.getElementById('lang').value;
-  const type=document.getElementById('type').value;
-  const phoneOnly=document.getElementById('phoneOnly').value==='1';
+  db = await openDB();
+  const apiKey    = document.getElementById('apiKey').value.trim();
+  const query     = document.getElementById('query').value.trim();
+  const lang      = document.getElementById('lang').value;
+  const type      = document.getElementById('type').value;
+  const maxRes    = Math.min(parseInt(document.getElementById('maxResults').value)||60, 60);
+  const phoneOnly = document.getElementById('phoneOnly').value==='1';
 
-  if(!apiKey){log('Unesite API ključ!','err');return}
-  if(!query){log('Unesite ključnu riječ!','err');return}
+  if(!apiKey){ log('Unesite API ključ!','err'); return; }
+  if(!query){  log('Unesite ključnu riječ!','err'); return; }
 
   stopFlag=false;
   document.getElementById('btnSearch').disabled=true;
   document.getElementById('btnStop').disabled=false;
-  setStatus('Pretraga: '+query,'run');
+  setStatus('Pretraga: '+query, 'run');
   log(`Pretraga: "${query}"`, 'info');
 
-  // Skupi place IDs
+  // Faza 1: skupi place_id-ove kroz paginaciju (max 3 stranice = 60)
   let allIds=[];
   let pageToken=null;
   let page=0;
 
-  while(page<3 && !stopFlag){
+  while(page<3 && allIds.length<maxRes && !stopFlag){
     try{
-      if(page>0) await sleep(2500);
+      if(page>0) await sleep(2500); // Google zahtijeva pauzu između stranica
       const params={query, language:lang, key:apiKey};
       if(type) params.type=type;
       if(pageToken) params.pagetoken=pageToken;
-      const data=await gFetch('textsearch/json', params);
 
-      if(data.status==='REQUEST_DENIED'){log('API greška: '+(data.error_message||'Ključ nije validan ili nije dozvoljen za ovaj domain'),'err');break}
-      if(data.status==='ZERO_RESULTS'){log('Nema rezultata za: '+query,'warn');break}
-      if(data.status!=='OK'){log('Status: '+data.status,'warn');break}
+      const data = await gCall('textsearch/json', params);
+
+      if(data.status==='REQUEST_DENIED'){
+        log('API greška: '+(data.error_message||'Ključ nije validan'), 'err');
+        break;
+      }
+      if(data.status==='ZERO_RESULTS'){
+        log('Nema rezultata za: '+query, 'warn');
+        break;
+      }
+      if(data.status!=='OK'){
+        log('Neočekivani status: '+data.status, 'warn');
+        break;
+      }
 
       const ids=(data.results||[]).map(r=>r.place_id);
       allIds=[...allIds,...ids];
-      log(`Stranica ${page+1}: +${ids.length} mjesta (ukupno: ${allIds.length})`,'info');
-      pageToken=data.next_page_token;
+      log(`Stranica ${page+1}: +${ids.length} mjesta (ukupno: ${allIds.length})`, 'info');
+
+      pageToken=data.next_page_token||null;
       if(!pageToken) break;
       page++;
-    }catch(e){log('Greška pretrage: '+e.message,'err');break}
+    }catch(e){
+      log('Greška pretrage: '+e.message, 'err');
+      break;
+    }
   }
 
-  allIds=[...new Set(allIds)];
-  log(`Ukupno za obradu: ${allIds.length} mjesta`,'ok');
+  allIds=[...new Set(allIds)].slice(0, maxRes);
+  log(`Ukupno za obradu: ${allIds.length} mjesta`, 'ok');
 
-  let found=0,withPhone=0;
+  if(allIds.length===0){
+    setStatus('Nema rezultata', 'err');
+    document.getElementById('btnSearch').disabled=false;
+    document.getElementById('btnStop').disabled=true;
+    return;
+  }
+
+  // Faza 2: dohvati detalje za svako mjesto
+  let found=0, withPhone=0;
   updCnt(0,0);
 
-  for(let i=0;i<allIds.length;i++){
-    if(stopFlag){log('⏹ Zaustavljeno.','warn');break}
-    setStatus(`[${i+1}/${allIds.length}] Dohvaćam detalje...`,'run');
+  for(let i=0; i<allIds.length; i++){
+    if(stopFlag){ log('⏹ Zaustavljeno.','warn'); break; }
+
+    setStatus(`[${i+1}/${allIds.length}] Dohvaćam detalje...`, 'run');
     setProgress(Math.round((i+1)/allIds.length*100));
+
     try{
       await sleep(200);
-      const det=await gFetch('details/json',{
-        place_id:allIds[i],
-        fields:'name,formatted_phone_number,formatted_address,rating,website,place_id',
-        language:lang,
-        key:apiKey
+      const det = await gCall('details/json', {
+        place_id: allIds[i],
+        fields:   'name,formatted_phone_number,formatted_address,rating,website,place_id',
+        language: lang,
+        key:      apiKey
       });
-      if(det.status!=='OK'){log(`Greška ${allIds[i]}: ${det.status}`,'warn');continue}
+
+      if(det.status!=='OK'){
+        log(`Preskačem ${allIds[i]}: ${det.status}`, 'warn');
+        continue;
+      }
+
       const r=det.result;
-      const rec={naziv:r.name||'',telefon:r.formatted_phone_number||'',adresa:r.formatted_address||'',rating:r.rating||null,website:r.website||'',place_id:r.place_id||allIds[i],ts:new Date().toISOString()};
-      if(phoneOnly&&!rec.telefon) continue;
+      const rec={
+        naziv:   r.name||'',
+        telefon: r.formatted_phone_number||'',
+        adresa:  r.formatted_address||'',
+        rating:  r.rating||null,
+        website: r.website||'',
+        place_id:r.place_id||allIds[i],
+        ts:      new Date().toISOString()
+      };
+
+      if(phoneOnly && !rec.telefon) continue;
+
       await dbAdd(rec);
       addRow(rec);
       found++;
       if(rec.telefon) withPhone++;
-      updCnt(found,withPhone);
-      log(`✓ ${rec.naziv} | ${rec.telefon||'(bez broja)'} | ${rec.adresa}`,rec.telefon?'ok':'info');
-    }catch(e){log(`Greška detalji [${i+1}]: ${e.message}`,'warn')}
+      updCnt(found, withPhone);
+      log(`✓ ${rec.naziv} | ${rec.telefon||'(bez broja)'} | ${rec.adresa}`, rec.telefon?'ok':'info');
+
+    }catch(e){
+      log(`Greška detalji [${i+1}]: ${e.message}`, 'warn');
+    }
   }
 
-  setStatus(`Završeno — pronađeno: ${found}, s telefonom: ${withPhone}`,'done');
-  log(`✅ Gotovo. Pronađeno: ${found}, S telefonom: ${withPhone}`,'ok');
+  setStatus(`Završeno — pronađeno: ${found}, s telefonom: ${withPhone}`, 'done');
+  log(`✅ Gotovo. Pronađeno: ${found}, S telefonom: ${withPhone}`, 'ok');
   document.getElementById('btnSearch').disabled=false;
   document.getElementById('btnStop').disabled=true;
 }
@@ -280,32 +367,45 @@ function stopSearch(){
   stopFlag=true;
   document.getElementById('btnStop').disabled=true;
   document.getElementById('btnSearch').disabled=false;
-  setStatus('Zaustavljeno','');
-  log('⏹ Pretraga zaustavljena.','warn');
+  setStatus('Zaustavljeno', '');
+  log('⏹ Pretraga zaustavljena.', 'warn');
 }
 
 async function exportCSV(){
   const recs=await dbAll();
-  if(!recs.length){alert('Nema podataka!');return}
+  if(!recs.length){ alert('Nema podataka!'); return; }
   const hdr='ID,Naziv,Telefon,Adresa,Ocjena,Website,Place ID,Timestamp';
-  const rows=recs.map(r=>[r.id,r.naziv,r.telefon,r.adresa,r.rating,r.website,r.place_id,r.ts].map(v=>`"${String(v||'').replace(/"/g,'""')}"`).join(','));
+  const rows=recs.map(r=>
+    [r.id,r.naziv,r.telefon,r.adresa,r.rating,r.website,r.place_id,r.ts]
+    .map(v=>`"${String(v||'').replace(/"/g,'""')}"`)
+    .join(',')
+  );
   const blob=new Blob(['\uFEFF'+hdr+'\n'+rows.join('\n')],{type:'text/csv;charset=utf-8'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`places_${new Date().toISOString().slice(0,10)}.csv`;a.click();
-}
-async function exportJSON(){
-  const recs=await dbAll();
-  if(!recs.length){alert('Nema podataka!');return}
-  const blob=new Blob([JSON.stringify(recs,null,2)],{type:'application/json'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`places_${new Date().toISOString().slice(0,10)}.json`;a.click();
-}
-async function clearAll(){
-  if(!confirm('Obrisati sve podatke?'))return;
-  db=await openDB();await dbClear();
-  document.getElementById('tbody').innerHTML='<tr><td colspan="7"><div class="empty">Baza obrisana</div></td></tr>';
-  rowCount=0;updCnt(0,0);setProgress(0);
-  log('🗑 Baza obrisana.','warn');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=`places_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
 }
 
+async function exportJSON(){
+  const recs=await dbAll();
+  if(!recs.length){ alert('Nema podataka!'); return; }
+  const blob=new Blob([JSON.stringify(recs,null,2)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=`places_${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+}
+
+async function clearAll(){
+  if(!confirm('Obrisati sve podatke?')) return;
+  db=await openDB(); await dbClear();
+  document.getElementById('tbody').innerHTML='<tr><td colspan="7"><div class="empty">Baza obrisana</div></td></tr>';
+  rowCount=0; updCnt(0,0); setProgress(0);
+  log('🗑 Baza obrisana.', 'warn');
+}
+
+// Init — učitaj postojeće podatke iz baze
 (async()=>{
   db=await openDB();
   const recs=await dbAll();
@@ -313,8 +413,8 @@ async function clearAll(){
     document.getElementById('tbody').innerHTML='';
     recs.forEach(r=>addRow(r));
     rowCount=recs.length;
-    updCnt(recs.length,recs.filter(r=>r.telefon).length);
-    log(`Učitano ${recs.length} sačuvanih zapisa.`,'ok');
+    updCnt(recs.length, recs.filter(r=>r.telefon).length);
+    log(`Učitano ${recs.length} sačuvanih zapisa.`, 'ok');
   }
 })();
 </script>
